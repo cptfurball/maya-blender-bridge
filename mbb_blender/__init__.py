@@ -30,7 +30,7 @@ class MAYA_BRIDGE_ADDON_PREF(bpy.types.AddonPreferences):
         name="Temp FBX output dir",
         description="Path to store temp fbx file",
         subtype='DIR_PATH',
-        default=r"C:\Users\_\Desktop\mbb"
+        default=r"C:\temp"
     )
 
     def draw(self, context):

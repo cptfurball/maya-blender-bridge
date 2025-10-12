@@ -45,7 +45,7 @@ def import_reference(path):
 def import_fbx(path):
     try:
         # Import FBX
-        cmds.file(path, i=True, type="FBX", ignoreVersion=True, ra=True)
+        cmds.file(path, i=True, type="FBX", ignoreVersion=True, ra=True, namespace=unique_ns)
         return f"IMPORT_SUCCESS"
     except Exception as e:
         traceback.print_exc()
