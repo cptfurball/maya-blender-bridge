@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "Maya Blender Bridge",
+    "name": "Maya Blender Bridge (MBB)",
     "author": "Edward Lim",
-    "version": (1, 2),
-    "blender": (3, 0, 0),
+    "version": (1, 5),
+    "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Maya Tools",
-    "description": "Runs a client that connects to Maya socket to query for mesh transfer.",
+    "description": "Runs a client that connects to Maya socket to automate import/export",
     "category": "Import-Export",
 }
 
@@ -14,16 +14,21 @@ from datetime import datetime
 import socket
 
 HOST = '127.0.0.1'
-PORT = 50008
 
 addon_dir = os.path.dirname(__file__)
 # fbx2maya_script_path = os.path.join(addon_dir, "fbx2maya.py")
 
+class MBB_CONFIG(bpy.types.PropertyGroup):
+    connection_port: bpy.props.IntProperty(
+        name = "Port",
+        description = "Insert port number. Preferably from 1024 - 65535. Note that some of the ports might not work if it is being occupied",
+        default = 50008
+    )
 
 # ------------------------------------------------------------------------
 # Addon Preferences (for storing Maya paths)
 # ------------------------------------------------------------------------
-class MAYA_BRIDGE_ADDON_PREF(bpy.types.AddonPreferences):
+class MBB_ADDON_PREF(bpy.types.AddonPreferences):
     bl_idname = __name__
 
     temp_fbx_output_dir: bpy.props.StringProperty(
@@ -44,10 +49,26 @@ class MAYA_BRIDGE_ADDON_PREF(bpy.types.AddonPreferences):
 # ------------------------------------------------------------------------
 # Operator
 # ------------------------------------------------------------------------
-class BLENDER_TO_MAYA_PROC(bpy.types.Operator):
-    bl_idname = "proc.blender_to_maya"
+class PORT_TEST_PROC(bpy.types.Operator):
+    bl_idname = "proc.port_test"
+    bl_label = "Test the connection to Maya with the specified port"
+
+    def execute(self, context):
+        try:
+            # Try to send data to Maya. This is to tell Maya to import the FBX file that we 
+            # have just exported.
+            data = send_to_maya(f"PING", context.scene.mbb_config.connection_port)
+
+            # Log the response from Maya.
+            self.report({'INFO'}, f"[MBB Client] Received: {data.decode('utf-8')}")
+
+        except Exception as e:
+            self.report({'ERROR'}, f"[MBB Client] Process failed: {e}")
+        return {'FINISHED'}
+
+class EXPORT_SELECTION_PROC(bpy.types.Operator):
+    bl_idname = "proc.export_selection"
     bl_label = "Send selected meshes to Maya"
-    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         prefs = bpy.context.preferences.addons[__name__].preferences
@@ -65,20 +86,21 @@ class BLENDER_TO_MAYA_PROC(bpy.types.Operator):
         if not selected_objects:
             print("No objects selected for export.")
             return
-
-        # Export all selected objects as FBX.
+        
         bpy.ops.export_scene.fbx(
             filepath=temp_fbx_output_file_path,
             use_selection=True,
-            apply_unit_scale=True,
             global_scale=1.0,
-            use_space_transform=True,
+            # 'FBX_SCALE_ALL' + apply_unit_scale=True converts Blender Meters to Maya Centimeters
+            apply_unit_scale=True,
+            apply_scale_options='FBX_SCALE_ALL', 
+            axis_forward='-Z',
+            axis_up='Y',
+            bake_space_transform=True,
             object_types={'MESH'},
-            bake_space_transform=False,
             mesh_smooth_type='OFF',
-            use_custom_props=False,
-            add_leaf_bones=False,
-            path_mode='AUTO'
+            add_leaf_bones=False, # Maya doesn't need extra leaf bones
+            path_mode='AUTO',
         )
 
         # Reset unit scale back to meter.
@@ -87,20 +109,18 @@ class BLENDER_TO_MAYA_PROC(bpy.types.Operator):
         try:
             # Try to send data to Maya. This is to tell Maya to import the FBX file that we 
             # have just exported.
-            data = send_to_maya(f"IMPORT_FBX {temp_fbx_output_file_path}")
+            data = send_to_maya(f"IMPORT_FBX {temp_fbx_output_file_path}", context.scene.mbb_config.connection_port)
 
             # Log the response from Maya.
             self.report({'INFO'}, f"[MBB Client] Received: {data.decode('utf-8')}")
 
         except Exception as e:
-            self.report({'ERROR'}, f"Process failed: {e}")
+            self.report({'ERROR'}, f"[MBB Client] Process failed: {e}")
         return {'FINISHED'}
 
-
-class MAYA_TO_BLENDER_PROC(bpy.types.Operator):
-    bl_idname = "proc.maya_to_blender"
+class IMPORT_SELECTION_PROC(bpy.types.Operator):
+    bl_idname = "proc.import_selection"
     bl_label = "Import selected Maya mesh to Blender"
-    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         prefs = bpy.context.preferences.addons[__name__].preferences
@@ -115,7 +135,7 @@ class MAYA_TO_BLENDER_PROC(bpy.types.Operator):
             # Provide Maya with the file output path.
             # It is easier if one side of the communication decides this rather than
             # having both side to decide independently and having to sync it.
-            data = send_to_maya(f"EXPORT_SELECTED {temp_fbx_output_file_path}")
+            data = send_to_maya(f"EXPORT_SELECTED {temp_fbx_output_file_path}", context.scene.mbb_config.connection_port)
             
             # Response from Maya.
             self.report({'INFO'}, f"[MBB Client] Received: {data.decode('utf-8')}")
@@ -135,13 +155,12 @@ class MAYA_TO_BLENDER_PROC(bpy.types.Operator):
 
             # Reset scale to 1.0 for all imported objects. For some reason it auto scales to 100.
             for obj in imported_objects:
-                obj.scale = (1.0, 1.0, 1.0)
+                # obj.scale = (1.0, 1.0, 1.0)
                 obj.select_set(True)
 
         except Exception as e:
             self.report({'ERROR'}, f"Process failed: {e}")
         return {'FINISHED'}
-
 
 # ------------------------------------------------------------------------
 # Creates a Panel in the N tool sidebar.
@@ -155,31 +174,40 @@ class MAYA_BRIDGE_PANEL(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator("proc.blender_to_maya", text="SEND TO MAYA", icon='PLAY')
-        layout.operator("proc.maya_to_blender", text="SEND HERE", icon='PLAY')
+
+        layout.prop(context.scene.mbb_config, "connection_port")
+        layout.operator("proc.port_test", text="Port Test", icon='ARROW_LEFTRIGHT')
+        layout.separator()
+        layout.operator("proc.export_selection", text="Export Selection", icon='EXPORT')
+        layout.operator("proc.import_selection", text="Import Selection", icon='IMPORT')
 
 
 # ------------------------------------------------------------------------
 # Registration
 # ------------------------------------------------------------------------
 classes = (
-    MAYA_BRIDGE_ADDON_PREF,
-    BLENDER_TO_MAYA_PROC,
-    MAYA_TO_BLENDER_PROC,
+    MBB_CONFIG,
+    MBB_ADDON_PREF,
+    PORT_TEST_PROC,
+    EXPORT_SELECTION_PROC,
+    IMPORT_SELECTION_PROC,
     MAYA_BRIDGE_PANEL,
 )
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
+    
+    bpy.types.Scene.mbb_config = bpy.props.PointerProperty(type=MBB_CONFIG)
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-def send_to_maya(message):
+def send_to_maya(message, port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((HOST, PORT))
+        s.settimeout(3.0)  
+        s.connect((HOST, port))
         s.sendall(message.encode('utf-8'))
         data = s.recv(4000)
         return data

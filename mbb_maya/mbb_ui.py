@@ -1,14 +1,15 @@
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
-from shiboken2 import wrapInstance
 
 # ---------------------------------------------------------------------------
 # Compatibility for both PySide2 and PySide6
 # ---------------------------------------------------------------------------
 try:
     from PySide2 import QtWidgets, QtCore
+    from shiboken2 import wrapInstance
 except ImportError:
     from PySide6 import QtWidgets, QtCore
+    from shiboken6 import wrapInstance
 
 import mbb_server
 
@@ -33,6 +34,27 @@ class MBBUI(QtWidgets.QDialog):
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Window)
 
         layout = QtWidgets.QVBoxLayout(self)
+
+        # --- Port Number Section ---
+        connection_port_layout = QtWidgets.QHBoxLayout()
+        connection_port_label = QtWidgets.QLabel("Connection Port:")
+
+        self.connection_port = QtWidgets.QSpinBox()
+        self.connection_port.setRange(1024, 65535)
+        self.connection_port.setValue(50008)
+        
+        connection_port_layout.addWidget(connection_port_label)
+        connection_port_layout.addWidget(self.connection_port)
+        layout.addLayout(connection_port_layout)
+        
+        # Divider Line
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.HLine)
+        line.setFrameShadow(QtWidgets.QFrame.Sunken)
+        layout.addWidget(line)
+        # ---------------------------
+
+
         self.start_btn = QtWidgets.QPushButton("Start Server")
         self.stop_btn = QtWidgets.QPushButton("Stop Server")
         self.status_label = QtWidgets.QLabel("Status: Stopped")
@@ -55,7 +77,7 @@ class MBBUI(QtWidgets.QDialog):
             self.stop_btn.hide()
 
     def start_server(self):
-        mbb_server.start_server()
+        mbb_server.start_server("0.0.0.0", self.connection_port.value())
         self.status_label.setText("Status: Running")
         self.start_btn.hide()
         self.stop_btn.show() 

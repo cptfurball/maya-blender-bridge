@@ -6,6 +6,7 @@
 import socket
 import threading
 import traceback
+import os
 import maya.utils
 import maya.cmds as cmds
 import maya.mel as mel
@@ -45,7 +46,20 @@ def import_reference(path):
 def import_fbx(path):
     try:
         # Import FBX
-        cmds.file(path, i=True, type="FBX", ignoreVersion=True, ra=True, namespace=unique_ns)
+        base_name = f"mbbimport_{os.path.splitext(os.path.basename(path))[0]}"
+
+        # Create namespace if it doesn't exist
+        if not cmds.namespace(exists=base_name):
+            cmds.namespace(add=base_name)
+
+        # Save current namespace
+        previous_namespace = cmds.namespaceInfo(currentNamespace=True)
+
+        # Set namespace, import, then restore
+        cmds.namespace(set=base_name)
+        cmds.file(path, i=True, type="FBX", namespace=base_name, gr=True, gn="mbb_imports")
+        cmds.namespace(set=previous_namespace)
+
         return f"IMPORT_SUCCESS"
     except Exception as e:
         traceback.print_exc()
@@ -74,6 +88,8 @@ def export_fbx(path):
         mel.eval('FBXExportCameras -v false')
         mel.eval('FBXExportLights -v false')
         mel.eval('FBXExportEmbeddedTextures -v false')
+        mel.eval('FBXExportInputConnections -v false')
+        mel.eval('FBXExportScaleFactor 1.0')
         mel.eval('FBXExportFileVersion -v "FBX202000"')
         mel.eval("FBXExportShowUI -v false")
 
